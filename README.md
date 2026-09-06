@@ -1,36 +1,122 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI SaaS App
 
-## Getting Started
+A full-stack AI-powered SaaS application with authentication, subscription billing, real-time AI chat, rate limiting, and persistent conversation history.
 
-First, run the development server:
+**Live demo:** [https://ai-saas-app-gold.vercel.app](https://ai-saas-app-gold.vercel.app)
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Overview
+
+This project lets users sign up, chat with an AI assistant (streamed responses in real time), upgrade to a paid Pro plan via Stripe, and view their full conversation history. It's built end-to-end as a production-style SaaS product — covering auth, payments, AI integration, and abuse protection.
+
+## Features
+
+- **Authentication** — Email/password signup and login with hashed passwords (bcrypt) and session-based auth (NextAuth.js)
+- **AI Chat** — Real-time, streamed responses from an LLM (Llama 3, via Groq's OpenAI-compatible API), rendered with full Markdown support (headings, tables, bold text)
+- **Subscriptions** — Stripe Checkout integration for a $9/month Pro plan, with webhook-driven subscription status updates
+- **Rate Limiting** — Redis-backed sliding-window rate limiting (Upstash) to prevent API abuse, enforced per logged-in user
+- **Conversation History** — Every chat exchange is saved to the database and viewable per-user on a dedicated history page
+- **Protected Routes** — Dashboard, chat, and history pages require authentication and redirect unauthenticated users to login
+
+## Tech Stack
+
+| Layer          | Technology                                                          |
+| -------------- | ------------------------------------------------------------------- |
+| Frontend       | Next.js 16 (App Router), React, TypeScript, Tailwind CSS            |
+| Backend        | Next.js API Routes (Server Actions style)                           |
+| Database       | PostgreSQL (Neon), Prisma ORM                                       |
+| Authentication | NextAuth.js (Credentials provider), bcrypt                          |
+| AI             | Groq API (Llama 3 / GPT-OSS models), OpenAI SDK (compatible client) |
+| Payments       | Stripe (Checkout Sessions, Webhooks)                                |
+| Rate Limiting  | Upstash Redis, @upstash/ratelimit                                   |
+| Deployment     | Vercel                                                              |
+
+## Architecture
+
+```
+app/
+├── page.tsx                  # Landing page
+├── login/, signup/           # Auth pages
+├── dashboard/                # Protected dashboard + Stripe upgrade button
+├── chat/                     # AI chat interface (streaming)
+├── history/                  # Per-user chat history
+├── components/Navbar.tsx     # Global navigation
+├── providers.tsx             # NextAuth SessionProvider wrapper
+└── api/
+    ├── signup/                # User registration
+    ├── auth/[...nextauth]/    # NextAuth handler
+    ├── chat/                  # Auth + rate-limit check → streamed AI response → save to DB
+    ├── checkout/              # Creates Stripe Checkout session
+    └── webhooks/stripe/       # Verifies Stripe signature, updates subscription status
+
+lib/
+├── prisma.ts       # Shared Prisma client
+├── stripe.ts       # Shared Stripe client
+└── ratelimit.ts    # Redis-backed rate limiter config
+
+prisma/
+└── schema.prisma   # User + ChatHistory models
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Request flow: sending a chat message
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. User submits a prompt from `/chat`
+2. `/api/chat` verifies the user is authenticated (NextAuth session)
+3. Redis checks the user hasn't exceeded their daily message limit
+4. The prompt is streamed to the Groq API; tokens are streamed back to the client in real time via `ReadableStream`
+5. Once streaming completes, the full prompt + response pair is saved to `ChatHistory` in Postgres
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Request flow: upgrading to Pro
 
-## Learn More
+1. User clicks "Upgrade to Pro" on `/dashboard`
+2. `/api/checkout` creates a Stripe Checkout Session tagged with the user's internal ID (via `metadata`)
+3. User completes payment on Stripe's hosted checkout page
+4. Stripe sends a `checkout.session.completed` webhook to `/api/webhooks/stripe`
+5. The webhook handler verifies the request signature, then updates the user's `plan`, `stripeCustomerId`, and `stripeSubscriptionId` in the database
 
-To learn more about Next.js, take a look at the following resources:
+## Database Schema
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**User**
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `id`, `email`, `password` (hashed), `name`, `createdAt`
+- `plan` (`free` | `pro`), `stripeCustomerId`, `stripeSubscriptionId`, `stripePriceId`, `stripeCurrentPeriodEnd`
 
-## Deploy on Vercel
+**ChatHistory**
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `id`, `userId`, `prompt`, `response`, `createdAt`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Running Locally
+
+```bash
+git clone https://github.com/aparnavijayan022/ai-saas-app.git
+cd ai-saas-app
+npm install
+```
+
+Create a `.env` file with:
+
+```
+DATABASE_URL=
+AUTH_SECRET=
+GROQ_API_KEY=
+STRIPE_SECRET_KEY=
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+STRIPE_PRO_PRICE_ID=
+STRIPE_WEBHOOK_SECRET=
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+```
+
+```bash
+npx prisma generate
+npx prisma db push
+npm run dev
+```
+
+Visit `http://localhost:3000`.
+
+## Possible Future Improvements
+
+- Higher rate limits for Pro-tier users (currently a flat limit for all users)
+- Ability to cancel/manage subscription from within the dashboard
+- Delete/search individual history entries
+- Multi-model selection (switch between different LLMs)
