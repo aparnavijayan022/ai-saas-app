@@ -28,8 +28,8 @@ export async function POST() {
       },
     ],
     customer_email: user.email,
-    success_url: `http://localhost:3000/dashboard?success=true`,
-    cancel_url: `http://localhost:3000/dashboard?canceled=true`,
+    success_url: `https://ai-saas-app-gold.vercel.app/dashboard?success=true`,
+    cancel_url: `https://ai-saas-app-gold.vercel.app/dashboard?canceled=true`,
     metadata: {
       userId: user.id,
     },
